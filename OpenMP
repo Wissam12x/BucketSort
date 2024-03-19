@@ -1,0 +1,84 @@
+#include <stdlib.h>
+#include <stdio.h>
+#include <time.h>
+#include <omp.h>
+
+#define MAX_VALUE 10000
+#define BUCKETS_PER_THREAD 10
+#define THREAD_COUNT 4
+
+typedef struct {
+    int *elements;
+    int currentSize;
+    int maxCapacity;
+} Bucket;
+
+int compareIntegers(const void *a, const void *b) {
+    return (*(int *)a - *(int *)b);
+}
+
+int main() {
+    int arraySize = 1000; // Size of the main array
+    int mainArray[arraySize];
+    Bucket localBuckets[BUCKETS_PER_THREAD * THREAD_COUNT]; // Buckets for each thread
+
+    // Prepare the buckets for use
+    for (int i = 0; i < BUCKETS_PER_THREAD * THREAD_COUNT; i++) {
+        localBuckets[i].elements = (int *)malloc(sizeof(int) * (arraySize / BUCKETS_PER_THREAD));
+        localBuckets[i].currentSize = 0;
+        localBuckets[i].maxCapacity = arraySize / BUCKETS_PER_THREAD;
+    }
+
+    for (int i = 0; i < arraySize; i++) {
+        mainArray[i] = rand() % MAX_VALUE;
+    }
+
+    double startTime, endTime;
+    startTime = omp_get_wtime();
+
+    #pragma omp parallel for num_threads(THREAD_COUNT) schedule(static)
+    for (int i = 0; i < arraySize; i++) {
+        int threadID = omp_get_thread_num();
+        int bucketIndex = mainArray[i] / (MAX_VALUE / BUCKETS_PER_THREAD);
+        int localBucketIndex = threadID * BUCKETS_PER_THREAD + bucketIndex; // Determine the correct bucket
+        Bucket *bucket = &localBuckets[localBucketIndex];
+
+        bucket->elements[bucket->currentSize++] = mainArray[i];
+    }
+
+    #pragma omp parallel for num_threads(THREAD_COUNT) schedule(static)
+    for (int i = 0; i < BUCKETS_PER_THREAD * THREAD_COUNT; i++) {
+        if (localBuckets[i].currentSize > 0) {
+            qsort(localBuckets[i].elements, localBuckets[i].currentSize, sizeof(int), compareIntegers);
+        }
+    }
+
+    // Merge sorted buckets back into the main array sequentially
+    int arrayIndex = 0;
+    for (int bucket = 0; bucket < BUCKETS_PER_THREAD; bucket++) {
+        for (int thread = 0; thread < THREAD_COUNT; thread++) {
+            int localBucketIndex = thread * BUCKETS_PER_THREAD + bucket;
+            for (int j = 0; j < localBuckets[localBucketIndex].currentSize; j++) {
+                mainArray[arrayIndex++] = localBuckets[localBucketIndex].elements[j];
+            }
+        }
+    }
+
+    for (int i = 0; i < BUCKETS_PER_THREAD * THREAD_COUNT; i++) {
+        free(localBuckets[i].elements);
+    }
+
+    endTime = omp_get_wtime();
+
+    // Display the sorted array
+    printf("Sorted array: \n");
+    for (int i = 0; i < arraySize; i++) {
+        printf("%d ", mainArray[i]);
+    }
+    printf("\n...");
+
+    // Print the execution time
+    printf("Execution time with OpenMP using %d threads: %.5f milliseconds\n", THREAD_COUNT, (endTime - startTime) * 1000);
+
+    return 0;
+}
